@@ -1,23 +1,106 @@
-import logo from './logo.svg';
-import './App.css';
+import { useCallback, useEffect, useState } from "react";
 
 function App() {
+  const [providerDetails, setProviderDetails] = useState({});
+  const [autoConnects, setAutoConnects] = useState(
+    (window.localStorage.getItem("autoConnects") || "").split(","),
+  );
+
+  const toggleRDNS = useCallback(
+    (rdns) => {
+      const updatedAutoConnects = autoConnects.includes(rdns)
+        ? autoConnects.filter((v) => v !== rdns)
+        : [...autoConnects, rdns];
+      window.localStorage.setItem("autoConnects", updatedAutoConnects);
+      setAutoConnects(updatedAutoConnects);
+    },
+    [autoConnects, setAutoConnects],
+  );
+
+  const connectProvider = useCallback(
+    (providerDetail) => async () => {
+      let accounts = [];
+      try {
+        accounts = await providerDetail.provider.request({
+          method: "eth_requestAccounts",
+        });
+      } catch (err) {
+        console.error(err);
+      }
+
+      setProviderDetails({
+        ...providerDetails,
+        [providerDetail.info.uuid]: {
+          ...providerDetail,
+          accounts,
+        },
+      });
+    },
+    [providerDetails, setProviderDetails],
+  );
+
+  useEffect(() => {
+    const eventHandler = async (event) => {
+      const newProviderDetail = { ...event.detail, accounts: [] };
+      const {
+        info: { uuid, rdns },
+      } = newProviderDetail;
+      if (!providerDetails[uuid]) {
+        setProviderDetails({
+          ...providerDetails,
+          [uuid]: newProviderDetail,
+        });
+
+        if (autoConnects.includes(rdns)) {
+          connectProvider(newProviderDetail)();
+        }
+      }
+    };
+    window.addEventListener("eip6963:announceProvider", eventHandler);
+
+    return () => {
+      window.removeEventListener("eip6963:announceProvider", eventHandler);
+    };
+  }, [providerDetails, setProviderDetails, connectProvider, autoConnects]);
+
+  useEffect(() => {
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+  });
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
+    <div>
+      {Object.values(providerDetails).map((providerDetail) => (
+        <div
+          style={{ border: "1px solid gray", padding: 5, margin: 10 }}
+          key={providerDetail.info.uuid}
         >
-          Learn React
-        </a>
-      </header>
+          <div>{providerDetail.info.name}</div>
+          <div>{providerDetail.info.rdns}</div>
+          <img
+            width="96"
+            height="96"
+            src={providerDetail.info.icon}
+            alt={providerDetail.info.name}
+          />
+          <div>
+            {!providerDetail.accounts.length ? (
+              <button onClick={connectProvider(providerDetail)}>Connect</button>
+            ) : (
+              <div>
+                <div>Accounts: {providerDetail.accounts}</div>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={autoConnects.includes(providerDetail.info.rdns)}
+                    onChange={() => toggleRDNS(providerDetail.info.rdns)}
+                  />
+                  Auto Connect
+                </label>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
